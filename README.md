@@ -57,7 +57,8 @@ To uninstall, disable it and delete only the `hermes-markdown-print` folder insi
 
 ## Compatibility and limits
 
-- Version 1.0.0 targets Windows Hermes Desktop and its `@hermes/plugin-sdk`. macOS, Linux, the web dashboard, and mobile are not certified.
+- Version 1.0.1 targets Windows Hermes Desktop and its `@hermes/plugin-sdk`. macOS, Linux, the web dashboard, and mobile are not certified.
+- Palette commands wait for the palette to finish closing before selecting a preview. Version 1.0.1 fixes the false "Open the Markdown file in Preview mode" error caused by the palette's temporary accessibility state.
 - Toolbar placement uses a small adapter for the current Markdown viewer structure. If Hermes changes that structure, the palette actions remain available as long as `[data-preview-markdown]` still identifies the document.
 - Partial previews and preview warnings are refused. Printing uses the rendered snapshot present at the click, not raw Markdown or unsaved edits.
 - Fonts and images are allowed 15 seconds to finish loading. Missing images produce an error instead of a silently incomplete print.

@@ -4,11 +4,13 @@ Prepared November 11, 2026, for the user's Windows Hermes Desktop installation.
 
 ## Automated checks
 
-All 14 Playwright test scenarios pass. The suite exercises the production plugin module against a fixture reproducing the installed viewer's structure, with public SDK file/palette functions mocked in memory.
+All 20 Playwright test scenarios pass. The suite exercises the production plugin module against a fixture reproducing the installed viewer's structure, with public SDK file/palette functions mocked in memory.
 
 Coverage includes visible and hidden panes, multiple documents, focus targeting, Source-mode removal, observer reinsertion, unknown toolbar structure, truncation refusal, repeated printing, print cancellation and errors, native no-op handling, browser export, exclusive filenames, folder cancellation/revocation, oversized exports, broken and blob images, sanitized output, and disposal during active work.
 
 The native print function is mocked in this suite. These checks validate document selection and lifecycle behavior, not the Windows print driver or its dialog.
+
+Version 1.0.1 adds regression coverage through the registered palette callbacks. Hermes invokes these callbacks before closing its Radix dialog, so the preview can still have an `aria-hidden`/`inert` ancestor during the exit animation. The regression failed against 1.0.0 and passes with the fix. The tests include delayed accessibility cleanup, both print commands, ambiguous and focused panes, hidden tabs, a closed preview, disposal while waiting, repeated commands, and an undismissed palette timeout. The plugin never removes the host's accessibility attributes.
 
 ## PDF layout checks
 
@@ -22,7 +24,7 @@ Three six-page PDFs were generated with Chromium: the native document layout fro
 
 `sample-print.pdf` is the validated Letter layout.
 
-## Live Windows verification
+## Live Windows verification (1.0.0)
 
 Verified in the running Hermes v0.23.1 installation:
 
@@ -34,6 +36,8 @@ Verified in the running Hermes v0.23.1 installation:
 - The first and final native PDF pages were visually checked. The Windows driver converted the text to vector outlines: the PDF is readable but text is not selectable/extractable. Browser **Save as PDF** is the provided route for selectable text. The user explicitly chose to retain system printing as the toolbar default after this finding.
 
 The user stopped computer control with the physical Escape key before live cancellation and the actual browser folder-picker flow were exercised. Those behaviors have automated coverage; they are not claimed as end-to-end Windows UI tests. No further app input was sent after the stop.
+
+The 1.0.1 palette fix was verified with the regression suite and installed; the browser folder-picker flow has not been retested through live computer control.
 
 ## Application integrity
 

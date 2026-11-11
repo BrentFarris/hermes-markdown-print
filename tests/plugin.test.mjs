@@ -12,6 +12,28 @@ async function fixture(fn, html, options) {
   finally { await page.close() }
 }
 
+async function selectPaletteCommand(page, id, { closeDelay = 160, restoreDelay = 40 } = {}) {
+  await page.evaluate(({ id, closeDelay, restoreDelay }) => {
+    const app = document.getElementById('app')
+    app.setAttribute('aria-hidden', 'true')
+    app.inert = true
+    const palette = document.createElement('div')
+    palette.setAttribute('role', 'dialog')
+    palette.dataset.state = 'open'
+    palette.innerHTML = '<div data-slot="command" cmdk-root=""><input aria-label="Command"></div>'
+    document.body.append(palette)
+    palette.querySelector('input').focus()
+    // Hermes invokes the contribution before closing its Radix dialog. The
+    // background remains aria-hidden until the exit animation is unmounted.
+    hmpContributions.get(id).data.run()
+    palette.dataset.state = 'closed'
+    if (closeDelay !== null) setTimeout(() => {
+      palette.remove()
+      setTimeout(() => { app.removeAttribute('aria-hidden'); app.inert = false }, restoreDelay)
+    }, closeDelay)
+  }, { id, closeDelay, restoreDelay })
+}
+
 test('injects one button per visible preview; switching modes and reload clean up', async () => {
   await fixture(async page => {
     assert.equal(await page.locator('.hmp-print-button').count(), 1)
@@ -53,6 +75,76 @@ test('palette refuses ambiguous documents and honors the last focused visible pa
     await page.evaluate(() => hmpController.run('native'))
     assert.equal(await page.evaluate(() => hmpPrintCalls.at(-1).title), 'Document A')
   }, documentPane() + documentPane({id:'b',title:'Document B'}))
+})
+
+test('registered palette commands wait for dialog exit and background accessibility cleanup', async () => {
+  for (const id of ['print', 'browser']) await fixture(async page => {
+    await selectPaletteCommand(page, id)
+    assert.equal(await page.evaluate(() => hmpController.busy), true)
+    assert.equal(await page.evaluate(() => hmpPrintCalls.length + hmpWrites.length), 0)
+    assert.equal(await page.getAttribute('#app', 'aria-hidden'), 'true')
+    await page.waitForFunction(() => !hmpController.busy)
+    assert.equal(await page.evaluate(id => id === 'print' ? hmpPrintCalls.length : hmpWrites.length, id), 1)
+    assert.equal(await page.evaluate(() => hmpNotifications.some(n => n.kind === 'error')), false)
+    assert.equal(await page.evaluate(() => document.querySelector('[role="dialog"]')), null)
+  })
+})
+
+test('palette dismissal preserves ambiguity, last focus, and hidden-tab targeting', async () => {
+  await fixture(async page => {
+    await selectPaletteCommand(page, 'browser')
+    await page.waitForFunction(() => !hmpController.busy)
+    assert.equal(await page.evaluate(() => hmpWrites.length), 0)
+    assert.match(await page.evaluate(() => hmpNotifications.at(-1).message), /Click inside/)
+    await page.locator('[data-pane-host="b"] h1').click()
+    await selectPaletteCommand(page, 'browser')
+    await page.waitForFunction(() => !hmpController.busy)
+    const html = await page.evaluate(() => hmpWrites[0][2])
+    assert.match(html, /Document B/)
+    assert.doesNotMatch(html, /Document A|Hidden document/)
+  }, documentPane() + documentPane({id:'b',title:'Document B'}) + documentPane({id:'c',title:'Hidden document',hidden:true}))
+})
+
+test('closing the preview while the palette exits never exports a stale document', async () => {
+  await fixture(async page => {
+    await selectPaletteCommand(page, 'browser')
+    await page.evaluate(() => document.querySelector('[data-preview-markdown]').remove())
+    await page.waitForFunction(() => !hmpController.busy)
+    assert.equal(await page.evaluate(() => hmpPickCount + hmpWrites.length + hmpOpens.length), 0)
+    assert.match(await page.evaluate(() => hmpNotifications.at(-1).message), /Open the Markdown file in Preview/)
+  })
+})
+
+test('disabling the plugin cancels a palette command waiting for dialog exit', async () => {
+  await fixture(async page => {
+    await selectPaletteCommand(page, 'browser')
+    await page.evaluate(() => hmpController.dispose())
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]') && !document.getElementById('app').inert)
+    assert.equal(await page.evaluate(() => hmpController.busy), false)
+    assert.equal(await page.evaluate(() => hmpPickCount + hmpWrites.length + hmpOpens.length), 0)
+    assert.equal(await page.evaluate(() => hmpNotifications.length), 0)
+    assert.equal(await page.locator('[data-hmp-owned]').count(), 0)
+  })
+})
+
+test('a repeated palette command during exit does not start a second operation', async () => {
+  await fixture(async page => {
+    await selectPaletteCommand(page, 'browser')
+    await page.evaluate(() => hmpContributions.get('browser').data.run())
+    await page.waitForFunction(() => !hmpController.busy)
+    assert.equal(await page.evaluate(() => hmpWrites.length), 1)
+    assert.match(await page.evaluate(() => hmpNotifications[0].message), /already in progress/)
+  })
+})
+
+test('an undismissed palette times out clearly without starting an export', async () => {
+  await fixture(async page => {
+    await selectPaletteCommand(page, 'browser', {closeDelay:null})
+    await page.waitForFunction(() => !hmpController.busy)
+    assert.equal(await page.evaluate(() => hmpPickCount + hmpWrites.length), 0)
+    assert.match(await page.evaluate(() => hmpNotifications.at(-1).message), /command palette.*close/i)
+    assert.equal(await page.getAttribute('#app', 'aria-hidden'), 'true')
+  })
 })
 
 test('observer reinserts a removed toolbar button and excludes a newly hidden pane', async () => {

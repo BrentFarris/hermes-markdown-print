@@ -2,13 +2,14 @@ import { host, PALETTE_AREA } from '@hermes/plugin-sdk'
 
 // A disk plugin: no imports of Hermes internals, native bridge calls, or backend.
 export const ID = 'hermes-markdown-print'
-export const VERSION = '1.0.0'
+export const VERSION = '1.0.1'
 const DOCUMENT = '[data-preview-markdown]'
 const OWNED = 'data-hmp-owned'
 const ROOT_ID = 'hermes-markdown-print-document'
 const ACTIVE = 'data-hmp-printing'
 const MAX_EXPORT_BYTES = 4 * 1024 * 1024
 const ASSET_TIMEOUT = 15000
+const PALETTE_TIMEOUT = 2000
 
 export const PRINT_CSS = `
 @page { size: auto; margin: 15mm; }
@@ -92,6 +93,44 @@ export function chooseDocument(doc, lastFocused) {
   throw new Error(roots.length
     ? 'Click inside the Markdown document you want to print, then try again.'
     : 'Open the Markdown file in Preview mode before printing.')
+}
+
+function waitForPaletteDismissal(doc, signal) {
+  checkAbort(signal)
+  const commandSelector = '[data-slot="command"], [cmdk-root]'
+  const focusedDialog = doc.activeElement?.closest('[role="dialog"]')
+  const palette = focusedDialog?.querySelector(commandSelector) ? focusedDialog
+    : [...doc.querySelectorAll('[role="dialog"]')].find(node => node.querySelector(commandSelector) && isVisible(node))
+  if (!palette) return Promise.resolve()
+  const win = doc.defaultView
+  return new Promise((resolve, reject) => {
+    let timer
+    let settled = false
+    const finish = error => {
+      if (settled) return
+      settled = true
+      observer.disconnect()
+      win.clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      if (error) reject(error)
+      else resolve()
+    }
+    const onAbort = () => finish(abortError())
+    const check = () => {
+      if (isVisible(palette)) return
+      const roots = [...doc.querySelectorAll(DOCUMENT)]
+      // Radix may release the background's aria-hidden/inert attributes after
+      // removing the dialog. Keep the normal hidden-tab checks while waiting.
+      if (!roots.length || roots.some(isVisible)) finish()
+    }
+    const observer = new win.MutationObserver(check)
+    observer.observe(doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class','style','hidden','inert','aria-hidden','data-state'] })
+    signal?.addEventListener('abort', onAbort, { once: true })
+    timer = win.setTimeout(() => finish(isVisible(palette)
+      ? new Error('The command palette did not close. Close it and try printing again.') : undefined), PALETTE_TIMEOUT)
+    if (signal?.aborted) onAbort()
+    else check()
+  })
 }
 
 const escapeHTML = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
@@ -325,7 +364,7 @@ export function createPluginController(ctx, { doc = document, win = window, noti
   const tell = (kind, text, action) => { if (!disposed) notify({ kind, title: 'Markdown Print', message: text, ...(action ? { action } : {}) }) }
   const updateBusy = () => { for (const button of buttons.values()) button.disabled = busy }
 
-  async function run(mode, root, existingSnapshot) {
+  async function run(mode, root, existingSnapshot, fromPalette = false) {
     if (disposed) return
     if (busy) { tell('info', 'A Markdown print operation is already in progress.'); return }
     const operation = new AbortController()
@@ -334,6 +373,10 @@ export function createPluginController(ctx, { doc = document, win = window, noti
     updateBusy()
     let snapshot
     try {
+      // Hermes invokes a palette contribution before dismissing the modal.
+      // Its exit animation temporarily makes even visible previews aria-hidden.
+      if (fromPalette) await waitForPaletteDismissal(doc, operation.signal)
+      checkAbort(operation.signal)
       snapshot = existingSnapshot || captureSnapshot(root || chooseDocument(doc, lastFocused))
       await prepareAssets(snapshot, operation.signal, assetTimeout)
       checkAbort(operation.signal)
@@ -431,7 +474,7 @@ export function createPluginController(ctx, { doc = document, win = window, noti
     ['print', 'Print Markdown document', 'native'],
     ['browser', 'Open Markdown print copy in browser', 'browser']
   ]) {
-    const remove = ctx.register({ id, area: PALETTE_AREA, data: { id: `${ID}.${id}`, label, keywords: ['markdown','print','pdf','export'], run: () => void run(mode) } })
+    const remove = ctx.register({ id, area: PALETTE_AREA, data: { id: `${ID}.${id}`, label, keywords: ['markdown','print','pdf','export'], run: () => void run(mode, undefined, undefined, true) } })
     if (typeof remove === 'function') disposers.push(remove)
   }
   function dispose() {
