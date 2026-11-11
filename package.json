@@ -1,0 +1,9 @@
+{
+  "name": "hermes-markdown-print",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone Hermes Desktop Markdown printing plugin",
+  "scripts": { "test": "node --test --test-concurrency=1 tests/plugin.test.mjs", "validate:pdf": "node tests/render-pdf.mjs" },
+  "devDependencies": { "playwright": "1.62.1" }
+}
